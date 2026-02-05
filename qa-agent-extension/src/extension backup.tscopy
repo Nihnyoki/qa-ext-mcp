@@ -1,0 +1,546 @@
+import * as vscode from "vscode";
+import { spawn } from "child_process";
+import * as path from "path";
+import { connectMcp } from "./mcpClient";
+import { parseRunCommand } from "./nlp/parseRunCommand";
+
+let mcpClient: any;
+
+/**
+ * Session state for the chat agent
+ */
+const agentState: {
+  awaitingDefectConfirmation: boolean;
+  defectCandidate?: any;
+} = {
+  awaitingDefectConfirmation: false,
+};
+
+export function activate(context: vscode.ExtensionContext) {
+  vscode.window.showInformationMessage("🔥 QA Agent Activated!");
+  console.log("🔥 QA Agent Activated!");
+  
+  const handler: vscode.ChatRequestHandler = async (
+    request: vscode.ChatRequest,
+    context: vscode.ChatContext,
+    stream: vscode.ChatResponseStream,
+    token: vscode.CancellationToken
+  ) => {
+
+    stream.markdown("🧪 **QA Agent Online**\n\n");
+
+    stream.markdown(`You said: **${request.prompt}**\n\n`);
+
+    return;
+  };
+
+  const qaAgent = vscode.chat.createChatParticipant(
+    "internal.qa-agent",
+    handler
+  );
+
+  qaAgent.iconPath = vscode.Uri.joinPath(
+    context.extensionUri,
+    "media",
+    "qa-icon.png"
+  );
+
+  context.subscriptions.push(qaAgent);
+  // const participant = vscode.chat.createChatParticipant(
+  //   "qaAgent",
+  //   async (request, context, stream, token) => {
+  //     console.log("💬 QA Agent received:", request.prompt);
+
+  //     stream.markdown(
+  //       `Hello Sandile 👋\n\nYou said: **${request.prompt}**`
+  //     );
+  //   }
+  // );
+
+  /**
+   * Existing command (kept)
+   */
+  const command = vscode.commands.registerCommand(
+    "qaAgent.generateFromStory",
+    () => QAGeneratorPanel.createOrShow(context)
+  );
+  context.subscriptions.push(command);
+
+  /**
+   * MCP Client connects once
+   */
+  async function getClient() {
+    if (!mcpClient) {
+      mcpClient = await connectMcp(context);
+    }
+    return mcpClient;
+  }
+
+  /**
+   * Chat Participant
+   */
+ const participant = vscode.chat.createChatParticipant(
+    "qaAgent",
+    async (req, ctx, stream) => {
+      console.log("✅ Chat participant registered:", participant.id);
+
+      stream.markdown(`Hello Sandile 👋`);
+      stream.markdown(`\n\nYou said: **${req.prompt}**`);
+
+      const prompt = req.prompt.trim().toLowerCase();
+      const client = await getClient();
+
+      stream.markdown(`🧪 **QA Agent**\n\n`);
+
+      // --------------------------------------------
+      // ✅ 1. Confirmation Handling Comes FIRST
+      // --------------------------------------------
+      if (agentState.awaitingDefectConfirmation) {
+        if (prompt === "yes") {
+          stream.markdown("🐞 Creating defect in Azure DevOps...\n\n");
+
+          await client.callTool({
+            name: "ado_create_defect",
+            arguments: {
+              title: agentState.defectCandidate.title,
+              description: agentState.defectCandidate.description,
+              severity: "High",
+            },
+          });
+
+          stream.markdown("✅ Defect created successfully.\n\n");
+
+          // Reset state
+          agentState.awaitingDefectConfirmation = false;
+          agentState.defectCandidate = undefined;
+          return;
+        }
+
+        if (prompt === "no") {
+          stream.markdown("👍 Okay, defect will not be created.\n\n");
+
+          // Reset state
+          agentState.awaitingDefectConfirmation = false;
+          agentState.defectCandidate = undefined;
+          return;
+        }
+
+        stream.markdown("⚠️ Please reply with **yes** or **no**.\n\n");
+        return;
+      }
+
+      // --------------------------------------------
+      // ✅ 2. Natural Language Run Detection
+      // --------------------------------------------
+      const runRequest = parseRunCommand(req.prompt);
+
+      if (runRequest) {
+        stream.markdown("▶️ Understood. Running QA automation...\n\n");
+
+        stream.markdown("Parsed execution request:\n\n");
+        stream.markdown("```json\n");
+        stream.markdown(JSON.stringify(runRequest, null, 2));
+        stream.markdown("\n```\n\n");
+
+        // Execute tests
+        const runResult = await client.callTool({
+          name: "run_dynamic_tests",
+          arguments: {
+            runner: runRequest.runner,
+            tags: runRequest.tags,
+            env: runRequest.env,
+            opco: runRequest.opco,
+            platform: runRequest.platform,
+          },
+        });
+
+        const logFile = runResult.content[0].json.run.logFile;
+
+        stream.markdown(`✅ Execution complete.\n\n`);
+        stream.markdown(`📄 Log: \`${logFile}\`\n\n`);
+
+        // Summarize results
+        stream.markdown("🔎 Summarizing results...\n\n");
+
+        const summary = await client.callTool({
+          name: "summarize_test_log",
+          arguments: { logFile },
+        });
+
+        const resultJson = summary.content[0].json;
+
+        stream.markdown("### 📌 Summary\n\n");
+        stream.markdown("```json\n");
+        stream.markdown(JSON.stringify(resultJson, null, 2));
+        stream.markdown("\n```\n\n");
+
+        // Failures → Suggest defect creation
+        if (resultJson.status === "FAIL") {
+          agentState.awaitingDefectConfirmation = true;
+          agentState.defectCandidate = resultJson.defectCandidate;
+
+          stream.markdown(
+            `❌ Failures detected.\n\n` +
+            `Would you like me to create a defect in Azure DevOps?\n\n` +
+            `Reply **yes** or **no**.\n\n`
+          );
+        } else {
+          stream.markdown("✅ All tests passed. No further action needed.\n\n");
+        }
+
+        return;
+      }
+
+      // --------------------------------------------
+      // ✅ 3. Default fallback
+      // --------------------------------------------
+      stream.markdown(
+        "I can help you run QA automation.\n\n" +
+        "Try requests like:\n\n" +
+        "- Run the MoMo API smoke tests for CIV in UAT\n" +
+        "- Run the mobile regression suite for GHA on SIT Android\n\n"
+      );
+    }
+  );
+
+  /**
+   * Icon + subscription
+   */
+  participant.iconPath = vscode.Uri.joinPath(
+    context.extensionUri,
+    "media",
+    "qa-icon.png"
+  );
+
+//  context.subscriptions.push(participant);
+  
+}
+
+class QAGeneratorPanel {
+  public static currentPanel: QAGeneratorPanel | undefined;
+  private readonly panel: vscode.WebviewPanel;
+
+  static createOrShow(context: vscode.ExtensionContext) {
+    if (this.currentPanel) {
+      this.currentPanel.panel.reveal();
+      return;
+    }
+
+    const panel = vscode.window.createWebviewPanel(
+      "qaAgent.panel",
+      "QA Agent – BDD Generator",
+      vscode.ViewColumn.One,
+      { enableScripts: true }
+    );
+
+    this.currentPanel = new QAGeneratorPanel(panel);
+  }
+
+  private constructor(panel: vscode.WebviewPanel) {
+    this.panel = panel;
+    panel.webview.html = getWebviewHtml();
+
+    panel.webview.onDidReceiveMessage(msg => {
+      if (msg.type === "generate") this.runCli(msg.payload);
+    });
+
+    panel.onDidDispose(() => {
+      QAGeneratorPanel.currentPanel = undefined;
+    });
+  }
+
+  private runCli(payload: any) {
+    const { storyId, opcos, targetPath, featurePath, stepContextPath, testType, operation, testPlanId, testSuiteId, agent } = payload;
+
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) return vscode.window.showErrorMessage("No workspace open.");
+
+    const cliRel = vscode.workspace.getConfiguration("qaAgent").get<string>("cliPath");
+    if (!cliRel) return vscode.window.showErrorMessage("qaAgent.cliPath not configured.");
+
+    const cliPath = path.join(workspaceRoot, cliRel);
+
+    const args = [
+      cliPath,
+      `--operation=${operation}`
+    ];
+
+    if (opcos?.length && operation !== "publishToADO") {
+      args.push(`--opcos=${opcos.join(",")}`);
+    }
+
+
+    if (storyId) args.push(`--storyId=${storyId}`);
+    if (targetPath) args.push(`--targetPath=${targetPath}`);
+    if (featurePath) args.push(`--featurePath=${featurePath}`);
+    if (testType) args.push(`--testType=${testType}`);
+    if (stepContextPath) args.push(`--stepContextPath=${stepContextPath}`);
+    if (testPlanId) args.push(`--testPlanId=${testPlanId}`);
+    if (testSuiteId) args.push(`--testSuiteId=${testSuiteId}`);
+    if (agent) args.push(`--agent=${agent}`);
+
+    this.postLog(`▶ Running CLI:\n${args.join(" ")}\n`);
+
+    const proc = spawn("npx", ["ts-node", ...args], {
+      cwd: workspaceRoot,
+      shell: false
+    });
+
+    proc.stdout.on("data", d => this.postLog(d.toString()));
+    proc.stderr.on("data", d => this.postLog(`❌ ${d.toString()}`));
+    proc.on("close", code => {
+      this.postLog(
+        code === 0
+          ? "\n✅ Operation complete\n"
+          : `\n❌ CLI exited with ${code}\n`
+      );
+
+      this.panel.webview.postMessage({ type: "done" });
+    });
+
+
+    proc.on("error", err => this.postLog(`❌ Spawn error: ${err.message}\n`));
+
+  }
+
+
+  private postLog(message: string) {
+    this.panel.webview.postMessage({ type: "log", message });
+  }
+}
+
+
+function getWebviewHtml(): string {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>QA Agent</title>
+<style>
+body { font-family: var(--vscode-font-family); padding:16px }
+input, select { width:100%; margin-bottom:8px }
+.opcos { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px }
+button { margin-top:12px }
+.hidden { display:none }
+pre {
+  height:220px;
+  overflow:auto;
+  background:#4e4e4e;
+  padding:8px;
+  color:#FFFFFF;
+}
+label { display:block; margin-top:6px }
+</style>
+</head>
+<body>
+
+<h2>QA Agent – BDD Generator</h2>
+
+<label>Operation
+<select id="operation">
+  <option value="generateFeatureFile">Generate Feature File</option>
+  <option value="generateScripts">Generate Script</option>
+  <option value="publishToADO">Publish To ADO</option>
+</select>
+</label>
+
+<div id="featureGenFields">
+  <label>Story ID
+    <input id="storyId" placeholder="94803"/>
+  </label>
+
+  <label>Target Path (Features Folder)
+    <input id="targetPath" placeholder="setup/bdd/api/mars_momo/src/tests/GHA/features"/>
+  </label>
+
+  <label>Test Type
+    <select id="featureTestType">
+      <option value="API">API</option>
+      <option value="UI">UI</option>
+    </select>
+  </label>
+
+<label>OpCos</label>
+<div class="opcos">
+  <label><input type="checkbox" value="CMR"/>CMR</label>
+  <label><input type="checkbox" value="CIV"/>CIV</label>
+  <label><input type="checkbox" value="GHA"/>GHA</label>
+  <label><input type="checkbox" value="UGN"/>UGN</label>
+  <label><input type="checkbox" value="ZMB"/>ZMB</label>
+</div>
+
+</div>
+
+<div id="scriptGenFields" class="hidden">
+  <label>Feature File Path
+    <input id="featurePath" placeholder=".../features/story-94803.feature"/>
+  </label>
+
+  <label>Target Path (Steps Folder)
+    <input id="scriptTargetPath" placeholder=".../steps"/>
+  </label>
+
+<label>OpCos</label>
+<div class="opcos">
+  <label><input type="checkbox" value="CMR"/>CMR</label>
+  <label><input type="checkbox" value="CIV"/>CIV</label>
+  <label><input type="checkbox" value="GHA"/>GHA</label>
+  <label><input type="checkbox" value="UGN"/>UGN</label>
+  <label><input type="checkbox" value="ZMB"/>ZMB</label>
+</div>
+
+
+</div>
+
+<div id="publishFields" class="hidden">
+  <label>Feature File Path
+    <input id="publishFeaturePath" placeholder=".../features/story-94803.feature"/>
+  </label>
+
+  <label>Test Plan ID
+    <input id="testPlanId" placeholder="88868"/>
+  </label>
+
+  <label>Test Suite ID
+    <input id="testSuiteId" placeholder="117818"/>
+  </label>
+
+  <label>Test Type
+    <select id="publishTestType">
+      <option value="API">API</option>
+      <option value="UI">UI</option>
+    </select>
+  </label>
+
+</div>
+
+<label>Step Context (Optional)
+  <input id="stepContextPath" placeholder=".../steps/common"/>
+</label>
+
+<label>LLM Provider</label>
+<select id="agent">
+  <option value="ollama:deepseek-r1">Ollama – DeepSeek R1 (Local)</option>
+  <option value="openai:gpt-4.1">OpenAI – GPT-4.1 (API)</option>
+</select>
+
+
+<button id="submitBtn">Submit</button>
+
+<pre id="log"></pre>
+
+<script>
+const vscode = acquireVsCodeApi();
+const logEl = document.getElementById("log");
+
+const getValue = (id) => {
+  const el = document.getElementById(id);
+  return el ? el.value.trim() : "";
+};
+
+const operationSelect = document.getElementById("operation");
+const featureGenFields = document.getElementById("featureGenFields");
+const scriptGenFields = document.getElementById("scriptGenFields");
+const publishFields = document.getElementById("publishFields");
+
+function updateVisibility() {
+  const op = operationSelect.value;
+
+  featureGenFields.classList.toggle("hidden", op !== "generateFeatureFile");
+  scriptGenFields.classList.toggle("hidden", op !== "generateScripts");
+  publishFields.classList.toggle("hidden", op !== "publishToADO");
+}
+
+function clearOpcos() {
+  document.querySelectorAll(".opcos input").forEach(cb => cb.checked = false);
+}
+
+// 👇 THIS is the missing piece
+operationSelect.addEventListener("change", () => {
+  clearOpcos();
+  updateVisibility();
+});
+
+// 👇 Ensure correct state on load
+updateVisibility();
+
+const btn = document.getElementById("submitBtn");
+
+window.addEventListener("message", (event) => {
+  const msg = event.data;
+
+  if (msg.type === "log") {
+    logEl.textContent += msg.message;
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  if (msg.type === "done") {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("submitBtn").onclick = () => {
+
+  btn.disabled = true;
+
+  console.log("SubmitBtn clicked.")
+
+  const operation = document.getElementById("operation").value;
+
+  const opcos = [...document.querySelectorAll(".opcos input:checked")]
+    .map(e => e.value);
+
+  if (operation !== "publishToADO" && opcos.length === 0) {
+    alert("Please select at least one OpCo.");
+      console.log("Please select at least one OpCo.")
+     btn.disabled = false;
+    return;
+  }
+
+  const testType =
+  operation === "publishToADO"
+    ? getValue("publishTestType")
+    : getValue("featureTestType");
+
+      console.log("operation === publishToADO.")
+
+  const payload = {
+    operation,
+    testType,
+    stepContextPath: getValue("stepContextPath"),
+    agent: document.getElementById("agent").value
+  };
+
+  if (operation === "generateFeatureFile") {
+    payload.storyId = getValue("storyId");
+    payload.targetPath = getValue("targetPath");
+    payload.opcos = opcos;
+  }
+
+  if (operation === "generateScripts") {
+    payload.featurePath = getValue("featurePath"); 
+    payload.targetPath = getValue("scriptTargetPath");
+    payload.opcos = opcos;
+  }
+
+  if (operation === "publishToADO") {
+    payload.featurePath = getValue("publishFeaturePath");
+    payload.testPlanId = getValue("testPlanId");
+    payload.testSuiteId = getValue("testSuiteId");
+  }
+
+  vscode.postMessage({
+    type: "generate",
+    payload
+  });
+  
+};
+</script>
+
+</body>
+</html>
+`;
+}
+
+

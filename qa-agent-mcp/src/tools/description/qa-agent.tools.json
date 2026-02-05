@@ -1,0 +1,163 @@
+{
+    "agent": {
+        "name": "qa-agent-mcp",
+        "version": "1.0.0",
+        "description": "Agentic QA orchestration server for WDIO + Cucumber + Azure DevOps",
+        "executionModes": [
+            "stdio",
+            "http"
+        ]
+    },
+    "policies": {
+        "autoActions": [
+            "run_dynamic_tests",
+            "summarize_test_log",
+            "validate_api_schema",
+            "compare_screenshots",
+            "discover_features"
+        ],
+        "confirmationRequired": [
+            "ado_create_defect",
+            "ado_create_testcase",
+            "ado_link_items"
+        ]
+    },
+    "tools": [
+        {
+            "name": "run_dynamic_tests",
+            "category": "execution",
+            "description": "Run Cucumber or WDIO tests dynamically using tags, feature paths, and environment context",
+            "runnerTypes": [
+                "cucumber",
+                "wdio"
+            ],
+            "inputs": {
+                "runner": "cucumber | wdio",
+                "featurePath": "string (optional)",
+                "tags": "string (optional)",
+                "env": "string",
+                "opco": "string (optional)",
+                "platform": "API | ANDROID | IOS (optional)",
+                "team": "string (optional)",
+                "appVersion": "string (optional)",
+                "wdioConfig": "string (optional)"
+            },
+            "outputs": {
+                "status": "PASS | FAIL",
+                "logFile": "string",
+                "exitCode": "number"
+            },
+            "nextActions": [
+                "summarize_test_log"
+            ]
+        },
+        {
+            "name": "summarize_test_log",
+            "category": "analysis",
+            "description": "Parse automation logs and extract failures, scenarios, and defect candidates",
+            "inputs": {
+                "logFile": "string"
+            },
+            "outputs": {
+                "status": "PASS | FAIL",
+                "totalScenarios": "number",
+                "failedScenarios": "number",
+                "topErrors": [
+                    "string"
+                ]
+            },
+            "producesDefectCandidate": true,
+            "nextActionsOnFailure": [
+                "ask_user_create_defect"
+            ]
+        },
+        {
+            "name": "validate_api_schema",
+            "category": "analysis",
+            "description": "Validate API response JSON against expected schema",
+            "inputs": {
+                "responseJson": "object",
+                "expectedSchema": "object"
+            },
+            "outputs": {
+                "status": "PASS | FAIL",
+                "missingFields": [
+                    "string"
+                ]
+            }
+        },
+        {
+            "name": "compare_screenshots",
+            "category": "visual",
+            "description": "Compare baseline and actual screenshots for visual regression testing",
+            "inputs": {
+                "baselinePath": "string",
+                "actualPath": "string",
+                "threshold": "number (optional)"
+            },
+            "outputs": {
+                "status": "PASS | FAIL",
+                "diffPixels": "number"
+            }
+        },
+        {
+            "name": "discover_features",
+            "category": "discovery",
+            "description": "List available Cucumber feature files in the repository",
+            "inputs": {
+                "basePath": "string (optional)"
+            },
+            "outputs": {
+                "features": [
+                    "string"
+                ]
+            }
+        },
+        {
+            "name": "ado_create_testcase",
+            "category": "ado",
+            "description": "Create an Azure DevOps Test Case from a Cucumber feature file and link it to a user story",
+            "requiresConfirmation": true,
+            "inputs": {
+                "featurePath": "string",
+                "storyId": "string",
+                "adoOrg": "string",
+                "adoProject": "string"
+            },
+            "outputs": {
+                "testcaseId": "string"
+            }
+        },
+        {
+            "name": "ado_create_defect",
+            "category": "ado",
+            "description": "Create an Azure DevOps defect and link it to a failing test case",
+            "requiresConfirmation": true,
+            "inputs": {
+                "title": "string",
+                "description": "string",
+                "severity": "Low | Medium | High",
+                "linkedTestcaseId": "string (optional)",
+                "adoOrg": "string",
+                "adoProject": "string"
+            },
+            "outputs": {
+                "defectId": "string"
+            }
+        },
+        {
+            "name": "ado_link_items",
+            "category": "ado",
+            "description": "Link Azure DevOps work items (Story ↔ Test Case ↔ Defect)",
+            "requiresConfirmation": true,
+            "inputs": {
+                "sourceId": "string",
+                "targetId": "string",
+                "linkType": "tests | relates-to | parent-child"
+            },
+            "outputs": {
+                "status": "linked"
+            }
+        }
+    ]
+}

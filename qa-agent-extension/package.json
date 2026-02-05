@@ -1,0 +1,110 @@
+{
+  "name": "qa-agent",
+  "displayName": "qa-agent",
+  "description": "Domain-aware QA agent for generating BDD tests from Azure DevOps stories",
+  "version": "0.0.1",
+  "icon": "media/qa-ai.png",
+  "publisher": "internal",
+  "repository": {
+    "type": "git",
+    "url": "https://dev.azure.com/your-org/your-project/_git/qa-agent-extension"
+  },
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "enabledApiProposals": [
+  "chatParticipantAdditions",
+  "extensionRuntime"
+],
+  "activationEvents": [
+    "onStartupFinished",
+    "onChatParticipant:internal.qa-agent.qa-agent",
+    "onCommand:qa-agent.generateFromStory"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "qa-agent",
+      "properties": {
+        "qa-agent.cliPath": {
+          "type": "string",
+          "default": "setup/ai/index.ts",
+          "description": "Path to the QA Agent CLI entry point (index.ts)"
+        },
+        "qa-agent.mcpServerEntry": {
+          "type": "string",
+          "default": "qa-agent-mcp/dist/index.js",
+          "description": "Workspace-relative path to the MCP server entry (built JS)."
+        },
+        "qa-agent.mcpCwd": {
+          "type": "string",
+          "default": "",
+          "description": "Optional working directory for MCP server (defaults to workspace root)."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "qa-agent.generateFromStory",
+        "title": "QA Agent: Generate BDD from Azure DevOps Story"
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "internal.qa-agent.qa-agent",
+        "name": "qa-agent",
+        "description": "Runs WDIO+Cucumber tests..."
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "qa-agent",
+          "title": "qa-agent",
+          "icon": "media/qa.svg"
+        }
+      ]
+    },
+    "views": {
+      "qa-agent": [
+        {
+          "id": "qa-agent.sidebarView",
+          "name": "QA AI Chat View",
+          "type": "webview"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@types/vscode": "^1.96.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.39.2",
+    "ts-loader": "^9.5.4",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.52.0",
+    "webpack": "^5.104.1",
+    "webpack-cli": "^6.0.1"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.3",
+    "axios": "^1.13.4",
+    "express": "^5.2.1"
+  }
+}
