@@ -16,9 +16,9 @@
     "Other"
   ],
   "enabledApiProposals": [
-  "chatParticipantAdditions",
-  "extensionRuntime"
-],
+    "chatParticipantAdditions",
+    "extensionRuntime"
+  ],
   "activationEvents": [
     "onStartupFinished",
     "onChatParticipant:internal.qa-agent.qa-agent",
@@ -91,7 +91,7 @@
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
-    "@types/node": "22.x",
+    "@types/node": "^22.19.9",
     "@types/vscode": "^1.96.0",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",

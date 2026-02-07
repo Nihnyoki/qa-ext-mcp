@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { connectMcp } from "../mcpClient";
+import { connectMcp, ensureRunnerReady } from "../mcpClient";
 import { parseRunCommand } from "../nlp/parseRunCommand";
 
 export class QaAiChatViewProvider implements vscode.WebviewViewProvider {
@@ -154,6 +154,14 @@ export class QaAiChatViewProvider implements vscode.WebviewViewProvider {
         tags: runReq.tags,
       };
       reason = "Detected a run request (runner/env/tags/opco) from your prompt.";
+
+      try {
+        await ensureRunnerReady(this.context, runReq.runner);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        webview.postMessage({ type: "append", role: "assistant", text: `Prep step failed:\n${message}` });
+        return;
+      }
     } else if (upper.includes("SUMMAR") || upper.includes("LOG")) {
       toolName = "summarize_test_log";
       const logFromPrompt = extractLogPath(prompt);

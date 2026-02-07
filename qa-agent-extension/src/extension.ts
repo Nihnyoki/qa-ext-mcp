@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { spawn } from "child_process";
 import * as path from "path";
-import { connectMcp } from "./mcpClient";
+import { connectMcp, ensureRunnerReady } from "./mcpClient";
 import { parseRunCommand } from "./nlp/parseRunCommand";
 import { QaAiChatViewProvider } from "./panels/qaChatView";
 
@@ -79,6 +79,14 @@ const provider = new QaAiChatViewProvider(context);
         stream.markdown(
           `Running **${runReq.runner}** tests (env: **${runReq.env}**${runReq.opco ? `, opco: **${runReq.opco}**` : ""})...\n\n`
         );
+
+        try {
+          await ensureRunnerReady(context, runReq.runner);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          stream.markdown(`❌ Prep step failed:\n\n${escapeMarkdown(msg)}\n\n`);
+          return;
+        }
 
         const result = await client.callTool({
           name: "run_dynamic_tests",
